@@ -3,3 +3,4 @@ cred.json
 
 #.env files
 .env
+.venv
