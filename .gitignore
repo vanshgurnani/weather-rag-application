@@ -1,0 +1,5 @@
+# cred hides
+cred.json
+
+#.env files
+.env
