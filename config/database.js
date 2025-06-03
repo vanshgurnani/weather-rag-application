@@ -8,7 +8,9 @@ const connectDB = async () => {
         const conn = await mongoose.connect(MONGODB_URI, {
             // These options ensure proper connection handling
             retryWrites: true,
-            w: 'majority'
+            w: 'majority',
+            serverSelectionTimeoutMS: 5000, // 5 second timeout
+            socketTimeoutMS: 45000, // 45 second timeout
         });
 
         console.log(`MongoDB Connected: ${conn.connection.host}`);
@@ -16,10 +18,13 @@ const connectDB = async () => {
         // Handle connection events
         mongoose.connection.on('error', err => {
             console.error('MongoDB connection error:', err);
+            if (err.name === 'MongooseServerSelectionError') {
+                console.error('Server selection timeout - possible 503 error');
+            }
         });
 
         mongoose.connection.on('disconnected', () => {
-            console.warn('MongoDB disconnected. Attempting to reconnect...');
+            console.warn('MongoDB disconnected');
         });
 
         mongoose.connection.on('reconnected', () => {

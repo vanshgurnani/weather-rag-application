@@ -4,8 +4,8 @@
   "description": "Weather and information assistant CLI",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "test-openai": "node openai.js"
+    "start": "nodemon server.js",
+    "test-openai": "nodemon openai.js"
   },
   "author": "",
   "license": "ISC",
@@ -13,6 +13,8 @@
     "@google/generative-ai": "^0.1.3",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^149.0.0",
     "mongoose": "^8.15.1",
     "readline-sync": "^1.4.10"
   }
