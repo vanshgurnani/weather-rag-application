@@ -11,6 +11,23 @@ const openai = new OpenAI({
 // Configure environment variables
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
+// Maintain conversation history
+let conversationHistory = [
+    {
+        role: "system",
+        content: `You are an intelligent assistant that helps users get information about weather, GitHub profiles, Twitter profiles, and countries.
+You should analyze user queries and respond appropriately based on their intent.
+For specific data queries, use one of these action codes:
+- Weather queries: ACTION:weather:<city>
+- GitHub profiles: ACTION:github:<username>
+- Twitter profiles: ACTION:twitter:<username>
+- Country information: ACTION:country:<country>
+- General questions: ACTION:freeform
+
+Respond ONLY with the action code for data queries.`
+    }
+];
+
 // Tool: Get weather info
 async function getCurrentWeather(city) {
     try {
@@ -91,65 +108,86 @@ function getCountryInfo(country) {
     return `${country.charAt(0).toUpperCase() + country.slice(1)} - Capital: ${data.capital}, Population: ${data.population}, Language: ${data.language}, Currency: ${data.currency}`;
 }
 
-// Unified Assistant using OpenAI
+// Unified Assistant using OpenAI with conversation history
 async function aiAssistant(userQuery) {
-    const SYSTEM_PROMPT = `You are an intelligent assistant that helps users get information. Based on the user's query, decide what information they need and respond with one of these action codes:
-- For weather queries: ACTION:weather:<city>
-- For GitHub profile queries: ACTION:github:<username>
-- For Twitter profile queries: ACTION:twitter:<username>
-- For country information queries: ACTION:country:<country>
-- For general questions: ACTION:freeform
-
-Respond ONLY with the action code, nothing else.`;
-
     try {
+        // Add user's query to conversation history
+        conversationHistory.push({
+            role: "user",
+            content: userQuery
+        });
+
         // Get the action from OpenAI
         const completion = await openai.chat.completions.create({
             model: "gpt-3.5-turbo",
-            messages: [
-                { role: "system", content: SYSTEM_PROMPT },
-                { role: "user", content: userQuery }
-            ],
+            messages: conversationHistory,
             temperature: 0.7,
             max_tokens: 50
         });
 
         const actionLine = completion.choices[0].message.content.trim();
+        
+        // Add assistant's action decision to history
+        conversationHistory.push({
+            role: "assistant",
+            content: actionLine
+        });
 
+        let response;
         if (actionLine.startsWith('ACTION:weather:')) {
             const city = actionLine.split(':', 3)[2];
-            const weatherInfo = await getCurrentWeather(city);
-            return weatherInfo || `Sorry, couldn't fetch weather data for ${city}.`;
+            response = await getCurrentWeather(city);
+            response = response || `Sorry, couldn't fetch weather data for ${city}.`;
         }
         else if (actionLine.startsWith('ACTION:github:')) {
             const username = actionLine.split(':', 3)[2];
-            const profileInfo = await getGithubProfile(username);
-            return profileInfo || `Sorry, couldn't fetch GitHub data for ${username}.`;
+            response = await getGithubProfile(username);
+            response = response || `Sorry, couldn't fetch GitHub data for ${username}.`;
         }
         else if (actionLine.startsWith('ACTION:twitter:')) {
             const username = actionLine.split(':', 3)[2];
-            return getTwitterProfile(username);
+            response = getTwitterProfile(username);
         }
         else if (actionLine.startsWith('ACTION:country:')) {
             const country = actionLine.split(':', 3)[2];
-            return getCountryInfo(country);
+            response = getCountryInfo(country);
         }
         else if (actionLine.startsWith('ACTION:freeform')) {
-            // For general questions, get a direct response from OpenAI
-            const response = await openai.chat.completions.create({
+            // For general questions, get a direct response from OpenAI with full context
+            const freeformResponse = await openai.chat.completions.create({
                 model: "gpt-3.5-turbo",
                 messages: [
-                    { role: "system", content: "You are a helpful assistant. Provide clear, concise answers." },
-                    { role: "user", content: userQuery }
+                    ...conversationHistory,
+                    {
+                        role: "system",
+                        content: "Provide a clear, concise, and helpful response to the user's question."
+                    }
                 ],
                 temperature: 0.7,
                 max_tokens: 150
             });
-            return response.choices[0].message.content.trim();
+            response = freeformResponse.choices[0].message.content.trim();
         }
         else {
-            return "Sorry, I didn't understand your request.";
+            response = "Sorry, I didn't understand your request.";
         }
+
+        // Add the final response to conversation history
+        conversationHistory.push({
+            role: "assistant",
+            content: response
+        });
+
+        // Keep conversation history manageable (last 10 messages)
+        if (conversationHistory.length > 10) {
+            // Always keep the system message
+            conversationHistory = [
+                conversationHistory[0],
+                ...conversationHistory.slice(-9)
+            ];
+        }
+
+        return response;
     } catch (error) {
         console.error('Error in AI assistant:', error);
         return "Sorry, there was an error processing your request.";
@@ -160,6 +198,7 @@ Respond ONLY with the action code, nothing else.`;
 async function main() {
     console.log("Welcome to the OpenAI Weather & Information Assistant!");
     console.log("(Type 'exit', 'quit', or 'bye' to end the program)\n");
+    console.log("Type 'clear' to reset conversation history\n");
 
     while (true) {
         const query = readlineSync.question('You: ').trim();
@@ -167,6 +206,13 @@ async function main() {
         if (query.toLowerCase() === 'exit' || query.toLowerCase() === 'quit' || query.toLowerCase() === 'bye') {
             console.log('\nGoodbye!');
             break;
+        }
+
+        if (query.toLowerCase() === 'clear') {
+            // Reset conversation history to initial state
+            conversationHistory = [conversationHistory[0]];
+            console.log('\nConversation history cleared.\n');
+            continue;
         }
 
         if (query) {

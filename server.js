@@ -1,95 +1,17 @@
 const readlineSync = require('readline-sync');
-const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const connectDB = require('./config/database');
+const todoController = require('./controllers/todoController');
+const weatherController = require('./controllers/weatherController');
+const githubController = require('./controllers/githubController');
+const socialController = require('./controllers/socialController');
+const countryController = require('./controllers/countryController');
 require('dotenv').config();
 
-// Configure environment variables
-const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-
 // Configure Gemini
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-// Tool: Get weather info
-async function getCurrentWeather(city) {
-    try {
-        const url = `http://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${OPENWEATHER_API_KEY}&units=metric`;
-        const response = await axios.get(url);
-        const data = response.data;
-        return `Current weather in ${city}: Temperature: ${data.main.temp}°C, Condition: ${data.weather[0].description}, Humidity: ${data.main.humidity}%`;
-    } catch (error) {
-        return null;
-    }
-}
-
-// Tool: Get GitHub profile summary
-async function getGithubProfile(username) {
-    try {
-        const url = `https://api.github.com/users/${username}`;
-        const response = await axios.get(url);
-        const data = response.data;
-        return `${data.name} (@${data.login}) has ${data.public_repos} public repos and ${data.followers} followers. Bio: ${data.bio || 'No bio'}.`;
-    } catch (error) {
-        return null;
-    }
-}
-
-// Tool: Mock Twitter profile summary
-function getTwitterProfile(username) {
-    const fakeProfiles = {
-        "elonmusk": {
-            name: "Elon Musk",
-            followers: "180M",
-            tweets: "25K",
-            bio: "Technoking of Tesla, CEO of SpaceX"
-        },
-        "jack": {
-            name: "Jack Dorsey",
-            followers: "6M",
-            tweets: "28K",
-            bio: "Block Head"
-        }
-    };
-
-    const data = fakeProfiles[username.toLowerCase()];
-    if (!data) {
-        return `Sorry, we don't have mock data for @${username}.`;
-    }
-    
-    return `${data.name} (@${username}) has ${data.followers} followers and ${data.tweets} tweets. Bio: ${data.bio}`;
-}
-
-// Tool: Mock Country Info
-function getCountryInfo(country) {
-    const countries = {
-        "india": {
-            capital: "New Delhi",
-            population: "1.4 billion",
-            language: "Hindi & English",
-            currency: "Indian Rupee (INR)"
-        },
-        "japan": {
-            capital: "Tokyo",
-            population: "125 million",
-            language: "Japanese",
-            currency: "Japanese Yen (JPY)"
-        },
-        "france": {
-            capital: "Paris",
-            population: "67 million",
-            language: "French",
-            currency: "Euro (EUR)"
-        }
-    };
-
-    const data = countries[country.toLowerCase()];
-    if (!data) {
-        return `Sorry, no info available for '${country}'.`;
-    }
-    
-    return `${country.charAt(0).toUpperCase() + country.slice(1)} - Capital: ${data.capital}, Population: ${data.population}, Language: ${data.language}, Currency: ${data.currency}`;
-}
 
 // Unified Assistant
 async function aiAssistant(userQuery) {
@@ -99,6 +21,11 @@ You are an intelligent assistant. Based on the user's query, decide what the int
 - If it's about GitHub, extract the username and say: ACTION:github:<username>
 - If it's about Twitter, extract the username and say: ACTION:twitter:<username>
 - If it's about a country, extract the country name and say: ACTION:country:<country>
+- If it's about adding a todo, say: ACTION:todo_add:<title>
+- If it's about listing todos, say: ACTION:todo_list
+- If it's about updating a todo, say: ACTION:todo_update:<id>:<title>
+- If it's about getting a specific todo, say: ACTION:todo_get:<id>
+- If it's about deleting a todo, say: ACTION:todo_delete:<id>
 - If it's anything else, respond with ACTION:freeform
 `;
 
@@ -108,29 +35,51 @@ You are an intelligent assistant. Based on the user's query, decide what the int
         const result = await model.generateContent(fullPrompt);
         const actionLine = result.response.text().trim();
 
-        if (actionLine.startsWith('ACTION:weather:')) {
+        if (actionLine.startsWith('ACTION:todo_add:')) {
+            const title = actionLine.split(':', 3)[2];
+            const response = await todoController.createTodo(title);
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:todo_list')) {
+            const response = await todoController.getAllTodos();
+            if (response.success && response.data.length > 0) {
+                return response.data.map(todo => todo.formatForDisplay()).join('\n');
+            }
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:todo_update:')) {
+            const [_, __, id, title] = actionLine.split(':');
+            const response = await todoController.updateTodo(id, title);
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:todo_get:')) {
+            const id = actionLine.split(':')[2];
+            const response = await todoController.getTodoById(id);
+            if (response.success) {
+                return response.data.formatForDisplay();
+            }
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:todo_delete:')) {
+            const id = actionLine.split(':')[2];
+            const response = await todoController.deleteTodo(id);
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:weather:')) {
             const city = actionLine.split(':', 3)[2];
-            const weatherInfo = await getCurrentWeather(city);
-            return weatherInfo || `Sorry, couldn't fetch weather data for ${city}.`;
-        }
-        else if (actionLine.startsWith('ACTION:github:')) {
+            const response = await weatherController.getCurrentWeather(city);
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:github:')) {
             const username = actionLine.split(':', 3)[2];
-            const profileInfo = await getGithubProfile(username);
-            return profileInfo || `Sorry, couldn't fetch GitHub data for ${username}.`;
-        }
-        else if (actionLine.startsWith('ACTION:twitter:')) {
+            const response = await githubController.getGithubProfile(username);
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:twitter:')) {
             const username = actionLine.split(':', 3)[2];
-            return getTwitterProfile(username);
-        }
-        else if (actionLine.startsWith('ACTION:country:')) {
+            const response = socialController.getTwitterProfile(username);
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:country:')) {
             const country = actionLine.split(':', 3)[2];
-            return getCountryInfo(country);
-        }
-        else if (actionLine.startsWith('ACTION:freeform')) {
+            const response = countryController.getCountryInfo(country);
+            return response.message;
+        } else if (actionLine.startsWith('ACTION:freeform')) {
             const freeFormResponse = await model.generateContent(userQuery);
             return freeFormResponse.response.text().trim();
-        }
-        else {
+        } else {
             return "Sorry, I didn't understand your request.";
         }
     } catch (error) {
@@ -141,20 +90,40 @@ You are an intelligent assistant. Based on the user's query, decide what the int
 
 // Main CLI loop
 async function main() {
-    console.log("Welcome to the Weather & Information Assistant!");
-    console.log("(Type 'exit', 'quit', or 'bye' to end the program)\n");
-
-    while (true) {
-        const query = readlineSync.question('You: ').trim();
+    try {
+        // Connect to MongoDB
+        await connectDB();
         
-        if (query.toLowerCase() === 'exit' || query.toLowerCase() === 'quit' || query.toLowerCase() === 'bye') {
-            console.log('\nGoodbye!');
-            break;
-        }
+        console.log("Welcome to the Information Assistant!");
+        console.log("\nAvailable Commands:");
+        console.log("\nTodo Management:");
+        console.log("- Add todo: 'add todo: [title]'");
+        console.log("- List todos: 'show todos'");
+        console.log("- Get todo: 'show todo [id]'");
+        console.log("- Update todo: 'update todo [id] to [new title]'");
+        console.log("- Delete todo: 'delete todo [id]'");
+        console.log("\nInformation Queries:");
+        console.log("- Weather: 'what's the weather in [city]'");
+        console.log("- GitHub: 'show github profile for [username]'");
+        console.log("- Twitter: 'show twitter profile for [username]'");
+        console.log("- Country: 'tell me about [country]'");
+        console.log("\n(Type 'exit', 'quit', or 'bye' to end the program)\n");
 
-        if (query) {
-            console.log('\nAssistant:', await aiAssistant(query), '\n');
+        while (true) {
+            const query = readlineSync.question('You: ').trim();
+            
+            if (query.toLowerCase() === 'exit' || query.toLowerCase() === 'quit' || query.toLowerCase() === 'bye') {
+                console.log('\nGoodbye!');
+                break;
+            }
+
+            if (query) {
+                console.log('\nAssistant:', await aiAssistant(query), '\n');
+            }
         }
+    } catch (error) {
+        console.error('Application error:', error);
+        process.exit(1);
     }
 }
 
