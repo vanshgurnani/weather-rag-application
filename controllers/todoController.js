@@ -1,26 +1,57 @@
 const Todo = require('../models/Todo');
 
+// Helper function for error handling
+const handleControllerError = (error, context) => {
+    // Log technical error for debugging
+    console.error(`Todo error (${context}):`, error);
+    
+    // Return user-friendly error
+    if (error.name === 'CastError' && error.kind === 'ObjectId') {
+        return {
+            success: false,
+            message: "That todo doesn't exist. Please check the ID and try again."
+        };
+    }
+    
+    if (error.name === 'ValidationError') {
+        return {
+            success: false,
+            message: "Please provide a valid title for the todo."
+        };
+    }
+    
+    return {
+        success: false,
+        message: "Something went wrong. Please try again."
+    };
+};
+
 // Create a new todo
 const createTodo = async (title) => {
     try {
-        const todo = new Todo({ title });
+        if (!title || title.trim().length === 0) {
+            return {
+                success: false,
+                message: "Please provide a title for your todo."
+            };
+        }
+
+        const todo = new Todo({
+            title: title.trim(),
+            completed: false
+        });
         await todo.save();
         return {
             success: true,
             data: todo,
-            message: `Added new todo: ${todo.title}`
+            message: `Added: ${title}`
         };
     } catch (error) {
-        console.error('Error creating todo:', error);
-        return {
-            success: false,
-            error: error.message,
-            message: 'Failed to create todo'
-        };
+        return handleControllerError(error, 'create');
     }
 };
 
-// Read all todos
+// Get all todos
 const getAllTodos = async () => {
     try {
         const todos = await Todo.find({}).sort({ createdAt: -1 });
@@ -29,106 +60,112 @@ const getAllTodos = async () => {
             return {
                 success: true,
                 data: [],
-                message: "No todos found."
+                message: "You don't have any todos yet. Try adding some!"
             };
         }
 
         return {
             success: true,
             data: todos,
-            message: "Todos retrieved successfully"
+            message: `Found ${todos.length} ${todos.length === 1 ? 'todo' : 'todos'}`
         };
     } catch (error) {
-        console.error('Error fetching todos:', error);
-        return {
-            success: false,
-            error: error.message,
-            message: 'Failed to fetch todos'
-        };
+        return handleControllerError(error, 'getAll');
     }
 };
 
-// Read a single todo by ID
+// Get todo by ID
 const getTodoById = async (id) => {
     try {
         const todo = await Todo.findById(id);
-        
         if (!todo) {
             return {
                 success: false,
-                message: 'Todo not found'
+                message: "That todo doesn't exist. Please check the ID and try again."
             };
         }
-
         return {
             success: true,
             data: todo,
-            message: 'Todo retrieved successfully'
+            message: todo.title
         };
     } catch (error) {
-        console.error('Error fetching todo:', error);
-        return {
-            success: false,
-            error: error.message,
-            message: 'Failed to fetch todo'
-        };
+        return handleControllerError(error, 'getById');
     }
 };
 
-// Update a todo
+// Update todo
 const updateTodo = async (id, title) => {
     try {
+        if (!title || title.trim().length === 0) {
+            return {
+                success: false,
+                message: "Please provide a new title for the todo."
+            };
+        }
+
         const todo = await Todo.findByIdAndUpdate(
             id,
-            { title },
-            { new: true, runValidators: true }
+            { title: title.trim() },
+            { new: true }
         );
-
         if (!todo) {
             return {
                 success: false,
-                message: 'Todo not found'
+                message: "That todo doesn't exist. Please check the ID and try again."
             };
         }
+        return {
+            success: true,
+            data: todo,
+            message: `Updated to: ${title}`
+        };
+    } catch (error) {
+        return handleControllerError(error, 'update');
+    }
+};
+
+// Toggle todo completion status
+const toggleComplete = async (id) => {
+    try {
+        const todo = await Todo.findById(id);
+        if (!todo) {
+            return {
+                success: false,
+                message: "That todo doesn't exist. Please check the ID and try again."
+            };
+        }
+
+        todo.completed = !todo.completed;
+        await todo.save();
 
         return {
             success: true,
             data: todo,
-            message: `Updated todo: ${todo.title}`
+            message: `${todo.title} is now ${todo.completed ? 'completed' : 'pending'}`
         };
     } catch (error) {
-        console.error('Error updating todo:', error);
-        return {
-            success: false,
-            error: error.message,
-            message: 'Failed to update todo'
-        };
+        return handleControllerError(error, 'toggle');
     }
 };
 
-// Delete a todo
+// Delete todo
 const deleteTodo = async (id) => {
     try {
         const todo = await Todo.findByIdAndDelete(id);
-        
         if (!todo) {
             return {
                 success: false,
-                message: 'Todo not found'
+                message: "That todo doesn't exist. Please check the ID and try again."
             };
         }
-
         return {
             success: true,
-            message: `Deleted todo: ${todo.title}`
+            data: todo,
+            message: `Deleted: ${todo.title}`
         };
     } catch (error) {
-        console.error('Error deleting todo:', error);
-        return {
-            success: false,
-            error: error.message,
-            message: 'Failed to delete todo'
-        };
+        return handleControllerError(error, 'delete');
     }
 };
 
@@ -137,5 +174,6 @@ module.exports = {
     getAllTodos,
     getTodoById,
     updateTodo,
+    toggleComplete,
     deleteTodo
 }; 
