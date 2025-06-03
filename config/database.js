@@ -1,18 +1,26 @@
 const mongoose = require('mongoose');
 
+let isConnected = false;
+
 const connectDB = async () => {
     try {
-        // MongoDB Atlas connection string (you'll need to add this to your .env file)
+        // If already connected, return the existing connection
+        if (isConnected) {
+            console.log('Using existing database connection');
+            return;
+        }
+
+        // MongoDB Atlas connection string
         const MONGODB_URI = process.env.MONGODB_URI;
         
         const conn = await mongoose.connect(MONGODB_URI, {
-            // These options ensure proper connection handling
             retryWrites: true,
             w: 'majority',
             serverSelectionTimeoutMS: 5000, // 5 second timeout
             socketTimeoutMS: 45000, // 45 second timeout
         });
 
+        isConnected = true;
         console.log(`MongoDB Connected: ${conn.connection.host}`);
 
         // Handle connection events
@@ -25,23 +33,33 @@ const connectDB = async () => {
 
         mongoose.connection.on('disconnected', () => {
             console.warn('MongoDB disconnected');
+            isConnected = false;
         });
 
         mongoose.connection.on('reconnected', () => {
             console.log('MongoDB reconnected');
+            isConnected = true;
         });
 
         // Handle process termination
-        process.on('SIGINT', async () => {
+        const gracefulShutdown = async () => {
             try {
-                await mongoose.connection.close();
-                console.log('MongoDB connection closed through app termination');
+                if (isConnected) {
+                    await mongoose.connection.close();
+                    console.log('MongoDB connection closed through app termination');
+                    isConnected = false;
+                }
                 process.exit(0);
             } catch (err) {
                 console.error('Error closing MongoDB connection:', err);
                 process.exit(1);
             }
-        });
+        };
+
+        // Handle different termination signals
+        process.on('SIGINT', gracefulShutdown); // For Ctrl+C
+        process.on('SIGTERM', gracefulShutdown); // For Docker/Kubernetes shutdown
+        process.on('SIGUSR2', gracefulShutdown); // For Nodemon restart
 
     } catch (error) {
         console.error('Error connecting to MongoDB:', error);
@@ -49,4 +67,8 @@ const connectDB = async () => {
     }
 };
 
-module.exports = connectDB; 
+// Export both the connection function and status
+module.exports = {
+    connectDB,
+    isConnected: () => isConnected
+}; 
