@@ -1,0 +1,17 @@
+{
+  "name": "weather-rag-application",
+  "version": "1.0.0",
+  "description": "Weather and information assistant CLI",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.1.3",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1",
+    "readline-sync": "^1.4.10"
+  }
+}
