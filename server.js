@@ -13,74 +13,85 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
+// Available functions that can be called by the AI
+const availableFunctions = {
+    getCurrentWeather: weatherController.getCurrentWeather,
+    getGithubProfile: githubController.getGithubProfile,
+    getTwitterProfile: socialController.getTwitterProfile,
+    getCountryInfo: countryController.getCountryInfo,
+    createTodo: todoController.createTodo,
+    getAllTodos: todoController.getAllTodos,
+    getTodoById: todoController.getTodoById,
+    updateTodo: todoController.updateTodo,
+    deleteTodo: todoController.deleteTodo
+};
+
 // Unified Assistant
 async function aiAssistant(userQuery) {
     const SYSTEM_PROMPT = `
-You are an intelligent assistant. Based on the user's query, decide what the intent is and respond accordingly.
-- If it's a weather-related question, extract the city and say: ACTION:weather:<city>
-- If it's about GitHub, extract the username and say: ACTION:github:<username>
-- If it's about Twitter, extract the username and say: ACTION:twitter:<username>
-- If it's about a country, extract the country name and say: ACTION:country:<country>
-- If it's about adding a todo, say: ACTION:todo_add:<title>
-- If it's about listing todos, say: ACTION:todo_list
-- If it's about updating a todo, say: ACTION:todo_update:<id>:<title>
-- If it's about getting a specific todo, say: ACTION:todo_get:<id>
-- If it's about deleting a todo, say: ACTION:todo_delete:<id>
-- If it's anything else, respond with ACTION:freeform
-`;
+IMPORTANT: You are a JSON-only response system. DO NOT use markdown, code blocks, or any other formatting.
+DO NOT include \`\`\`json or \`\`\` or any other markers.
+ONLY return a raw JSON object.
 
-    const fullPrompt = `${SYSTEM_PROMPT}\nUser query: "${userQuery}"`;
+Available functions:
+getCurrentWeather(city: string) - Get weather information for a city
+getGithubProfile(username: string) - Get GitHub profile information
+getTwitterProfile(username: string) - Get Twitter profile information
+getCountryInfo(country: string) - Get information about a country
+createTodo(title: string) - Create a new todo
+getAllTodos() - List all todos
+getTodoById(id: string) - Get a specific todo
+updateTodo(id: string, title: string) - Update a todo
+deleteTodo(id: string) - Delete a todo
+
+Your response must ONLY be a raw JSON object like this:
+{"function":"functionName","parameters":{"paramName":"value"}}
+
+Examples:
+{"function":"getCurrentWeather","parameters":{"city":"London"}}
+{"function":"createTodo","parameters":{"title":"Buy groceries"}}
+{"function":"conversation","parameters":{"response":"I understand you want to..."}}
+
+NO OTHER TEXT OR FORMATTING - JUST THE JSON OBJECT.`;
 
     try {
+        const fullPrompt = `${SYSTEM_PROMPT}\nUser query: "${userQuery}"`;
         const result = await model.generateContent(fullPrompt);
-        const actionLine = result.response.text().trim();
-
-        if (actionLine.startsWith('ACTION:todo_add:')) {
-            const title = actionLine.split(':', 3)[2];
-            const response = await todoController.createTodo(title);
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:todo_list')) {
-            const response = await todoController.getAllTodos();
-            if (response.success && response.data.length > 0) {
-                return response.data.map(todo => todo.formatForDisplay()).join('\n');
+        let response = result.response.text().trim();
+        
+        // Clean the response of any markdown or code block indicators
+        response = response.replace(/\`\`\`json|\`\`\`/g, '').trim();
+        
+        try {
+            // Log the cleaned response for debugging
+            console.debug('Raw AI Response:', response);
+            
+            // Basic validation that response starts with { and ends with }
+            if (!response.startsWith('{') || !response.endsWith('}')) {
+                throw new Error('Response is not a valid JSON object');
             }
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:todo_update:')) {
-            const [_, __, id, title] = actionLine.split(':');
-            const response = await todoController.updateTodo(id, title);
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:todo_get:')) {
-            const id = actionLine.split(':')[2];
-            const response = await todoController.getTodoById(id);
-            if (response.success) {
-                return response.data.formatForDisplay();
+            
+            const action = JSON.parse(response);
+            
+            // Validate the response structure
+            if (!action.function || !action.parameters) {
+                throw new Error('Invalid response structure: missing function or parameters');
             }
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:todo_delete:')) {
-            const id = actionLine.split(':')[2];
-            const response = await todoController.deleteTodo(id);
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:weather:')) {
-            const city = actionLine.split(':', 3)[2];
-            const response = await weatherController.getCurrentWeather(city);
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:github:')) {
-            const username = actionLine.split(':', 3)[2];
-            const response = await githubController.getGithubProfile(username);
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:twitter:')) {
-            const username = actionLine.split(':', 3)[2];
-            const response = socialController.getTwitterProfile(username);
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:country:')) {
-            const country = actionLine.split(':', 3)[2];
-            const response = countryController.getCountryInfo(country);
-            return response.message;
-        } else if (actionLine.startsWith('ACTION:freeform')) {
-            const freeFormResponse = await model.generateContent(userQuery);
-            return freeFormResponse.response.text().trim();
-        } else {
-            return "Sorry, I didn't understand your request.";
+            
+            if (action.function === "conversation") {
+                return action.parameters.response;
+            }
+            
+            if (availableFunctions[action.function]) {
+                const result = await availableFunctions[action.function](...Object.values(action.parameters));
+                return result.message;
+            } else {
+                return `Sorry, I couldn't process that request. Function '${action.function}' not found.`;
+            }
+        } catch (parseError) {
+            console.error('Error parsing AI response:', parseError);
+            console.error('Cleaned response:', response);
+            return "Sorry, I had trouble processing that request. Please try rephrasing your query.";
         }
     } catch (error) {
         console.error('Error in AI assistant:', error);
@@ -95,19 +106,6 @@ async function main() {
         await connectDB();
         
         console.log("Welcome to the Information Assistant!");
-        console.log("\nAvailable Commands:");
-        console.log("\nTodo Management:");
-        console.log("- Add todo: 'add todo: [title]'");
-        console.log("- List todos: 'show todos'");
-        console.log("- Get todo: 'show todo [id]'");
-        console.log("- Update todo: 'update todo [id] to [new title]'");
-        console.log("- Delete todo: 'delete todo [id]'");
-        console.log("\nInformation Queries:");
-        console.log("- Weather: 'what's the weather in [city]'");
-        console.log("- GitHub: 'show github profile for [username]'");
-        console.log("- Twitter: 'show twitter profile for [username]'");
-        console.log("- Country: 'tell me about [country]'");
-        console.log("\n(Type 'exit', 'quit', or 'bye' to end the program)\n");
 
         while (true) {
             const query = readlineSync.question('You: ').trim();
