@@ -68,42 +68,15 @@ const createTodo = async (title, priority = 'medium', assignee = 'Unassigned') =
     }
 };
 
-// Get all todos
-const getAllTodos = async () => {
+// Get all todos with optional filters
+const getAllTodos = async (searchTerm = '', priority = '', dateFilter = '') => {
     try {
-        // Sort by priority (high → medium → low) and then by creation date
-        const todos = await Todo.find({}).sort({ 
-            priority: -1, // This will sort high → medium → low
-            createdAt: -1 
-        });
-        
-        if (todos.length === 0) {
-            return {
-                success: true,
-                data: [],
-                message: "You don't have any todos yet. Try adding some!"
-            };
-        }
-
-        return {
-            success: true,
-            data: todos,
-            message: `Found ${todos.length} ${todos.length === 1 ? 'todo' : 'todos'}`
-        };
-    } catch (error) {
-        return handleControllerError(error, 'getAll');
-    }
-};
-
-// Search todos by title, priority, and/or date
-const searchTodos = async (searchTerm, priority, dateFilter) => {
-    try {
-        // Build search query
+        // Build query object
         const query = {};
         
-        // Add title search if provided
+        // Add title/search term if provided
         if (searchTerm && searchTerm.trim().length > 0) {
-            // Make the title search more flexible by searching for words within the title
+            // Make the title search flexible by searching for words within the title
             query.title = new RegExp(searchTerm.trim().split(/\s+/).join('|'), 'i');
         }
         
@@ -140,17 +113,17 @@ const searchTodos = async (searchTerm, priority, dateFilter) => {
                         $lt: startOfToday
                     };
                     break;
-                // Add more date filters as needed
+                default:
+                    return {
+                        success: false,
+                        message: "Invalid date filter. Please use 'today' or 'yesterday'."
+                    };
             }
         }
 
-        // If no search criteria provided, return all todos
-        if (Object.keys(query).length === 0) {
-            return getAllTodos();
-        }
-
+        // Sort by priority (high → medium → low) and then by creation date
         const todos = await Todo.find(query).sort({ 
-            priority: -1,
+            priority: -1, // This will sort high → medium → low
             createdAt: -1 
         });
         
@@ -177,7 +150,7 @@ const searchTodos = async (searchTerm, priority, dateFilter) => {
             message: message
         };
     } catch (error) {
-        return handleControllerError(error, 'search');
+        return handleControllerError(error, 'getAll');
     }
 };
 
@@ -201,27 +174,34 @@ const getTodoById = async (id) => {
     }
 };
 
-// Update todo by title
-const updateTodo = async (oldTitle, newTitle, priority, assignee) => {
+// Update todo by title or ID
+const updateTodo = async (identifier, newTitle, priority, assignee) => {
     try {
-        if (!oldTitle || !newTitle || oldTitle.trim().length === 0 || newTitle.trim().length === 0) {
+        if (!identifier || !newTitle || identifier.trim().length === 0 || newTitle.trim().length === 0) {
             return {
                 success: false,
-                message: "Please provide both the old and new title."
+                message: "Please provide both the identifier (title or ID) and new title."
             };
         }
 
-        // Find the most recent todo with the old title
-        const oldTitleRegex = new RegExp(`^${oldTitle.trim()}$`, 'i');
-        const todo = await Todo.findOne({ title: oldTitleRegex }).sort({ createdAt: -1 });
+        let todo;
+        // Check if identifier is a valid MongoDB ObjectId
+        if (/^[0-9a-fA-F]{24}$/.test(identifier)) {
+            todo = await Todo.findById(identifier);
+        } else {
+            // Find by title if not an ObjectId
+            const titleRegex = new RegExp(`^${identifier.trim()}$`, 'i');
+            todo = await Todo.findOne({ title: titleRegex }).sort({ createdAt: -1 });
+        }
 
         if (!todo) {
             return {
                 success: false,
-                message: `No todo found with title '${oldTitle}'`
+                message: `No todo found with ${/^[0-9a-fA-F]{24}$/.test(identifier) ? 'ID' : 'title'} '${identifier}'`
             };
         }
 
+        const oldTitle = todo.title;
         // Update the title and priority if provided
         todo.title = newTitle.trim();
         if (priority) {
@@ -248,14 +228,23 @@ const updateTodo = async (oldTitle, newTitle, priority, assignee) => {
     }
 };
 
-// Toggle todo completion status
-const toggleComplete = async (id) => {
+// Toggle todo completion status by title or ID
+const toggleComplete = async (identifier) => {
     try {
-        const todo = await Todo.findById(id);
+        let todo;
+        // Check if identifier is a valid MongoDB ObjectId
+        if (/^[0-9a-fA-F]{24}$/.test(identifier)) {
+            todo = await Todo.findById(identifier);
+        } else {
+            // Find by title if not an ObjectId
+            const titleRegex = new RegExp(`^${identifier.trim()}$`, 'i');
+            todo = await Todo.findOne({ title: titleRegex }).sort({ createdAt: -1 });
+        }
+
         if (!todo) {
             return {
                 success: false,
-                message: "That todo doesn't exist. Please check the ID and try again."
+                message: `No todo found with ${/^[0-9a-fA-F]{24}$/.test(identifier) ? 'ID' : 'title'} '${identifier}'`
             };
         }
 
@@ -272,16 +261,26 @@ const toggleComplete = async (id) => {
     }
 };
 
-// Delete todo
-const deleteTodo = async (id) => {
+// Delete todo by title or ID
+const deleteTodo = async (identifier) => {
     try {
-        const todo = await Todo.findByIdAndDelete(id);
+        let todo;
+        // Check if identifier is a valid MongoDB ObjectId
+        if (/^[0-9a-fA-F]{24}$/.test(identifier)) {
+            todo = await Todo.findByIdAndDelete(identifier);
+        } else {
+            // Find and delete by title if not an ObjectId
+            const titleRegex = new RegExp(`^${identifier.trim()}$`, 'i');
+            todo = await Todo.findOneAndDelete({ title: titleRegex }).sort({ createdAt: -1 });
+        }
+
         if (!todo) {
             return {
                 success: false,
-                message: "That todo doesn't exist. Please check the ID and try again."
+                message: `No todo found with ${/^[0-9a-fA-F]{24}$/.test(identifier) ? 'ID' : 'title'} '${identifier}'`
             };
         }
+
         return {
             success: true,
             data: todo,
@@ -320,7 +319,6 @@ const reassignTodo = async (id, newAssignee) => {
 module.exports = {
     createTodo,
     getAllTodos,
-    searchTodos,
     getTodoById,
     updateTodo,
     toggleComplete,
