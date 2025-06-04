@@ -42,8 +42,9 @@ const createTodo = async (title, priority = 'medium', assignee = 'Unassigned') =
             };
         }
 
-        // Validate priority
-        if (!PRIORITY_LEVELS.includes(priority.toLowerCase())) {
+        // Validate priority - handle null/undefined case
+        const normalizedPriority = (priority || 'medium').toLowerCase();
+        if (!PRIORITY_LEVELS.includes(normalizedPriority)) {
             return {
                 success: false,
                 message: `Invalid priority. Please use one of: ${PRIORITY_LEVELS.join(', ')}`
@@ -52,7 +53,7 @@ const createTodo = async (title, priority = 'medium', assignee = 'Unassigned') =
 
         const todo = new Todo({
             title: title.trim(),
-            priority: priority.toLowerCase(),
+            priority: normalizedPriority,
             completed: false,
             assignee: assignee.trim()
         });
@@ -60,7 +61,7 @@ const createTodo = async (title, priority = 'medium', assignee = 'Unassigned') =
         return {
             success: true,
             data: todo,
-            message: `Added: ${title} (${priority} priority) - Assigned to: ${assignee}`
+            message: `Added: ${title} (${normalizedPriority} priority) - Assigned to: ${assignee}`
         };
     } catch (error) {
         return handleControllerError(error, 'create');
@@ -94,34 +95,58 @@ const getAllTodos = async () => {
     }
 };
 
-// Search todos by title and/or priority
-const searchTodos = async (searchTerm, priority) => {
+// Search todos by title, priority, and/or date
+const searchTodos = async (searchTerm, priority, dateFilter) => {
     try {
         // Build search query
         const query = {};
         
         // Add title search if provided
         if (searchTerm && searchTerm.trim().length > 0) {
-            query.title = new RegExp(searchTerm.trim(), 'i');
+            // Make the title search more flexible by searching for words within the title
+            query.title = new RegExp(searchTerm.trim().split(/\s+/).join('|'), 'i');
         }
         
         // Add priority filter if provided
         if (priority) {
-            if (!PRIORITY_LEVELS.includes(priority.toLowerCase())) {
+            // Normalize priority input by removing extra words and spaces
+            const normalizedPriority = priority.toLowerCase().trim().replace(/\s+priority$/, '');
+            if (!PRIORITY_LEVELS.includes(normalizedPriority)) {
                 return {
                     success: false,
                     message: `Invalid priority. Please use one of: ${PRIORITY_LEVELS.join(', ')}`
                 };
             }
-            query.priority = priority.toLowerCase();
+            query.priority = normalizedPriority;
         }
 
-        // If no search criteria provided, return error
+        // Add date filter if provided
+        if (dateFilter) {
+            const now = new Date();
+            const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+            const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+
+            switch(dateFilter.toLowerCase()) {
+                case 'today':
+                    query.createdAt = {
+                        $gte: startOfToday,
+                        $lt: startOfTomorrow
+                    };
+                    break;
+                case 'yesterday':
+                    query.createdAt = {
+                        $gte: startOfYesterday,
+                        $lt: startOfToday
+                    };
+                    break;
+                // Add more date filters as needed
+            }
+        }
+
+        // If no search criteria provided, return all todos
         if (Object.keys(query).length === 0) {
-            return {
-                success: false,
-                message: "Please provide a search term or priority level to search for."
-            };
+            return getAllTodos();
         }
 
         const todos = await Todo.find(query).sort({ 
@@ -133,6 +158,7 @@ const searchTodos = async (searchTerm, priority) => {
             let message = "No todos found";
             if (searchTerm) message += ` matching '${searchTerm}'`;
             if (priority) message += ` with ${priority} priority`;
+            if (dateFilter) message += ` for ${dateFilter}`;
             return {
                 success: true,
                 data: [],
@@ -143,6 +169,7 @@ const searchTodos = async (searchTerm, priority) => {
         let message = `Found ${todos.length} ${todos.length === 1 ? 'todo' : 'todos'}`;
         if (searchTerm) message += ` matching '${searchTerm}'`;
         if (priority) message += ` with ${priority} priority`;
+        if (dateFilter) message += ` for ${dateFilter}`;
 
         return {
             success: true,

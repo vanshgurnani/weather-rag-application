@@ -1,6 +1,6 @@
-const readlineSync = require('readline-sync');
+const readline = require('readline');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const connectDB = require('./config/database');
+const { connectDB, isConnected } = require('./config/database');
 const todoController = require('./controllers/todoController');
 const weatherController = require('./controllers/weatherController');
 const githubController = require('./controllers/githubController');
@@ -12,7 +12,7 @@ require('dotenv').config();
 // Configure Gemini with retry logic
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Changed to gemini-pro which is more stable
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Changed to gemini-pro which is more stable
 
 // Available functions that can be called by the AI
 const availableFunctions = {
@@ -77,7 +77,11 @@ async function aiAssistant(userQuery) {
     try {
         // Check database connection before processing
         if (mongoose.connection.readyState !== 1) {
-            return "The system is currently reconnecting to the database. Please try again in a few moments.";
+            // Try to reconnect if not connected
+            await connectDB();
+            if (mongoose.connection.readyState !== 1) {
+                return "The database is currently unavailable. Please try again in a few moments.";
+            }
         }
         
         const SYSTEM_PROMPT = `
@@ -85,6 +89,34 @@ You are an AI Assistant that helps manage tasks, weather info, and other useful 
 Understand natural language and convert it into appropriate function calls.
 If you're not sure about something, respond with a conversation message.
 If a tool fails, respond naturally based on context.
+
+For todo-related queries:
+1. When searching todos with date:
+   - Use searchTodos() with dateFilter parameter
+   - Examples: 
+     "show today's tasks" -> searchTodos(null, null, "today")
+     "find yesterday's todos" -> searchTodos(null, null, "yesterday")
+     "what tasks did I create today" -> searchTodos(null, null, "today")
+
+2. When searching todos with priority:
+   - Use searchTodos() with priority parameter
+   - Examples: 
+     "show all medium priority tasks" -> searchTodos(null, "medium", null)
+     "find high priority todos" -> searchTodos(null, "high", null)
+     "search todos with low priority" -> searchTodos(null, "low", null)
+
+3. When searching todos with text:
+   - Use searchTodos() with searchTerm parameter
+   - Examples:
+     "find todos about meeting" -> searchTodos("meeting", null, null)
+     "search for audit tasks" -> searchTodos("audit", null, null)
+
+4. When combining search criteria:
+   - Use searchTodos() with multiple parameters
+   - Examples:
+     "find high priority audit tasks for today" -> searchTodos("audit", "high", "today")
+     "show yesterday's medium priority todos" -> searchTodos(null, "medium", "yesterday")
+     "search for today's meeting tasks" -> searchTodos("meeting", null, "today")
 
 When users express appreciation (e.g., "thanks", "good job", "nice", "ok", "perfect"), respond warmly and provide a helpful suggestion:
 {
@@ -290,38 +322,42 @@ Remember:
 
 // Main CLI loop
 async function main() {
-    let isConnected = false;
+    let dbConnected = false;
     
     try {
         // Connect to MongoDB with retry logic
         console.log("Connecting to database...");
         await connectDB();
-        isConnected = true;
+        dbConnected = true;
         
         console.log("Welcome to the Information Assistant!");
 
-        while (true) {
-            // Check connection status
-            if (!isConnected && mongoose.connection.readyState !== 1) {
-                console.log("Reconnecting to database...");
-                await connectDB();
-                isConnected = true;
-            }
-            
-            const query = readlineSync.question('You: ').trim();
-            
-            if (query.toLowerCase() === 'exit' || query.toLowerCase() === 'quit' || query.toLowerCase() === 'bye') {
-                console.log('\nGoodbye!');
-                break;
-            }
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
 
-            if (query) {
-                console.log('\nAssistant:', await aiAssistant(query), '\n');
-            }
-        }
+        const prompt = () => {
+            rl.question('You: ', async (query) => {
+                if (query.toLowerCase() === 'exit' || query.toLowerCase() === 'quit' || query.toLowerCase() === 'bye') {
+                    console.log('\nGoodbye!');
+                    rl.close();
+                    process.exit(0);
+                    return;
+                }
+
+                if (query) {
+                    const response = await aiAssistant(query);
+                    console.log('\nAssistant:', response, '\n');
+                }
+                prompt();
+            });
+        };
+
+        prompt();
     } catch (error) {
         console.error('Application error:', error);
-        if (!isConnected) {
+        if (!dbConnected) {
             console.error('Could not establish database connection. Please check your connection and try again.');
         }
         process.exit(1);
