@@ -69,19 +69,19 @@ const createTodo = async (title, priority = 'medium', assignee = 'Unassigned') =
 };
 
 // Get all todos with optional filters
-const getAllTodos = async (searchTerm = '', priority = '', dateFilter = '') => {
+const getAllTodos = async (searchTerm = '', priority = '', dateFilter = '', assignee = '') => {
     try {
         // Build query object
         const query = {};
         
-        // Add title/search term if provided
+        // Add title/search term if provided (optional)
         if (searchTerm && searchTerm.trim().length > 0) {
             // Make the title search flexible by searching for words within the title
             query.title = new RegExp(searchTerm.trim().split(/\s+/).join('|'), 'i');
         }
         
-        // Add priority filter if provided
-        if (priority) {
+        // Add priority filter if provided (optional)
+        if (priority && priority.trim().length > 0) {
             // Normalize priority input by removing extra words and spaces
             const normalizedPriority = priority.toLowerCase().trim().replace(/\s+priority$/, '');
             if (!PRIORITY_LEVELS.includes(normalizedPriority)) {
@@ -93,14 +93,20 @@ const getAllTodos = async (searchTerm = '', priority = '', dateFilter = '') => {
             query.priority = normalizedPriority;
         }
 
-        // Add date filter if provided
-        if (dateFilter) {
+        // Add assignee filter if provided (optional)
+        if (assignee && assignee.trim().length > 0) {
+            // Case-insensitive match for assignee
+            query.assignee = new RegExp(`^${assignee.trim()}$`, 'i');
+        }
+
+        // Add date filter if provided (optional)
+        if (dateFilter && dateFilter.trim().length > 0) {
             const now = new Date();
             const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
             const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
-            switch(dateFilter.toLowerCase()) {
+            switch(dateFilter.toLowerCase().trim()) {
                 case 'today':
                     query.createdAt = {
                         $gte: startOfToday,
@@ -114,10 +120,9 @@ const getAllTodos = async (searchTerm = '', priority = '', dateFilter = '') => {
                     };
                     break;
                 default:
-                    return {
-                        success: false,
-                        message: "Invalid date filter. Please use 'today' or 'yesterday'."
-                    };
+                    // If dateFilter is provided but invalid, ignore it instead of returning error
+                    console.log(`Invalid date filter '${dateFilter}' provided, showing all dates`);
+                    break;
             }
         }
 
@@ -129,9 +134,10 @@ const getAllTodos = async (searchTerm = '', priority = '', dateFilter = '') => {
         
         if (todos.length === 0) {
             let message = "No todos found";
-            if (searchTerm) message += ` matching '${searchTerm}'`;
-            if (priority) message += ` with ${priority} priority`;
-            if (dateFilter) message += ` for ${dateFilter}`;
+            if (searchTerm && searchTerm.trim()) message += ` matching '${searchTerm}'`;
+            if (priority && priority.trim()) message += ` with ${priority} priority`;
+            if (assignee && assignee.trim()) message += ` assigned to ${assignee}`;
+            if (dateFilter && dateFilter.trim()) message += ` for ${dateFilter}`;
             return {
                 success: true,
                 data: [],
@@ -140,9 +146,10 @@ const getAllTodos = async (searchTerm = '', priority = '', dateFilter = '') => {
         }
 
         let message = `Found ${todos.length} ${todos.length === 1 ? 'todo' : 'todos'}`;
-        if (searchTerm) message += ` matching '${searchTerm}'`;
-        if (priority) message += ` with ${priority} priority`;
-        if (dateFilter) message += ` for ${dateFilter}`;
+        if (searchTerm && searchTerm.trim()) message += ` matching '${searchTerm}'`;
+        if (priority && priority.trim()) message += ` with ${priority} priority`;
+        if (assignee && assignee.trim()) message += ` assigned to ${assignee}`;
+        if (dateFilter && dateFilter.trim()) message += ` for ${dateFilter}`;
 
         return {
             success: true,

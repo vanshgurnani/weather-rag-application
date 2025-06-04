@@ -58,7 +58,7 @@ Understand and respond to commands like:
 AVAILABLE TOOLS (Use when relevant):
 1. Task Management:
    createTodo: Create new tasks with priorities
-   getAllTodos: List and search todos (supports filtering by keywords, priority, and date)
+   getAllTodos: List and search todos (supports filtering by keywords, priority, and dateFilter)
    updateTodo: Modify existing tasks (can use either id or title to identify the task)
    deleteTodo: Remove tasks (can use either id or title to identify the task)
    toggleComplete: Mark tasks as done (can use either id or title)
@@ -83,9 +83,10 @@ For tool usage:
         "assignee": "person name",
 
         // For getAllTodos
-        "searchTerm": "search keywords",
-        "priority": "priority level",
-        "date": "today/yesterday",
+        "searchTerm": "search keywords (optional)",
+        "priority": "priority level (optional)",
+        "dateFilter": "today/yesterday (optional)",
+        "assignee": "person name (optional)",
 
         // For updateTodo/deleteTodo/toggleComplete
         "identifier": "task title or id",
@@ -126,7 +127,7 @@ Response: {
     "type": "tool_calling",
     "function": "getAllTodos",
     "parameters": {
-        "date": "yesterday"
+        "dateFilter": "yesterday"
     }
 }
 
@@ -157,12 +158,15 @@ const availableFunctions = {
     getTwitterProfile: socialController.getTwitterProfile,
     getCountryInfo: countryController.getCountryInfo,
     createTodo: todoController.createTodo,
-    getAllTodos: todoController.getAllTodos,
-    searchTodos: todoController.searchTodos,
+    getAllTodos: (params) => {
+        const { searchTerm = '', priority = '', dateFilter = '', assignee = '' } = params;
+        return todoController.getAllTodos(searchTerm, priority, dateFilter, assignee);
+    },
     getTodoById: todoController.getTodoById,
     updateTodo: todoController.updateTodo,
     toggleComplete: todoController.toggleComplete,
-    deleteTodo: todoController.deleteTodo
+    deleteTodo: todoController.deleteTodo,
+    reassignTodo: todoController.reassignTodo
 };
 
 // Format todo for display
