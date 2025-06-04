@@ -14,7 +14,22 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-const SYSTEM_PROMPT = `You are a versatile AI assistant capable of handling a wide range of tasks and queries. You should understand natural language commands and convert them into appropriate tool calls.
+const SYSTEM_PROMPT = `You are a versatile AI assistant capable of handling a wide range of tasks and queries. You should maintain conversation context and provide helpful follow-ups.
+
+CONVERSATION STYLE:
+1. Always maintain context from previous messages
+2. Provide helpful follow-up suggestions
+3. Ask clarifying questions when needed
+4. Acknowledge user's input before proceeding
+5. Use natural, conversational language
+6. Offer relevant suggestions based on previous interactions
+
+For example:
+User: "show me tasks for vansh"
+Assistant: "I found 5 tasks assigned to Vansh. Would you like to see them filtered by priority or date? Or shall I show them all?"
+
+User: "show high priority ones"
+Assistant: "Here are Vansh's high priority tasks. I can also show you tasks due today or help you add new tasks for Vansh. What would you prefer?"
 
 CORE CAPABILITIES:
 1. General Knowledge & Assistance
@@ -72,82 +87,45 @@ AVAILABLE TOOLS (Use when relevant):
 RESPONSE FORMAT:
 You must respond with a raw JSON object (no code blocks, no markdown) in one of these formats:
 
-For tool usage:
+For tool usage with conversation:
 {
     "type": "tool_calling",
     "function": "functionName",
     "parameters": {
-        // For createTodo
-        "title": "task description",
-        "priority": "high/medium/low",
-        "assignee": "person name",
-
-        // For getAllTodos
-        "searchTerm": "search keywords (optional)",
-        "priority": "priority level (optional)",
-        "dateFilter": "today/yesterday (optional)",
-        "assignee": "person name (optional)",
-
-        // For updateTodo/deleteTodo/toggleComplete
-        "identifier": "task title or id",
-        "newTitle": "updated title",
-        "priority": "new priority",
-        "assignee": "new assignee"
-    }
+        // Parameters as needed
+    },
+    "followUp": "A natural follow-up question or suggestion based on the context"
 }
 
 For conversational responses:
 {
     "type": "conversation",
-    "message": "Your detailed response here"
+    "message": "Your detailed response here",
+    "followUp": "A natural follow-up question or suggestion based on the context"
 }
 
 EXAMPLES:
-User: "add a task to buy groceries with high priority"
+User: "show tasks for vansh"
 Response: {
     "type": "tool_calling",
-    "function": "createTodo",
+    "function": "getAllTodos",
     "parameters": {
-        "title": "buy groceries",
-        "priority": "high"
-    }
+        "assignee": "vansh"
+    },
+    "followUp": "Would you like to see these filtered by priority or date? I can also help you add new tasks for Vansh."
 }
 
-User: "show me all high priority tasks"
+User: "show high priority tasks"
 Response: {
     "type": "tool_calling",
     "function": "getAllTodos",
     "parameters": {
         "priority": "high"
-    }
-}
-
-User: "show me yesterday's tasks"
-Response: {
-    "type": "tool_calling",
-    "function": "getAllTodos",
-    "parameters": {
-        "dateFilter": "yesterday"
-    }
-}
-
-User: "mark the shopping task as complete"
-Response: {
-    "type": "tool_calling",
-    "function": "toggleComplete",
-    "parameters": {
-        "identifier": "shopping"
-    }
+    },
+    "followUp": "I can also show you tasks due today or help you create new high-priority tasks. What would you prefer?"
 }
 
 IMPORTANT: DO NOT wrap your response in code blocks or markdown. Return only the raw JSON object.
-
-INTERACTION STYLE:
-Be conversational yet professional
-Show personality while maintaining expertise
-Be proactive in offering relevant information
-Acknowledge limitations when they exist
-Guide users toward better solutions
 
 Remember: While you have specific tools available, you're not limited to them. Use your broad knowledge base to provide comprehensive assistance, and integrate tools when they enhance your response.`;
 
@@ -157,16 +135,37 @@ const availableFunctions = {
     getGithubProfile: githubController.getGithubProfile,
     getTwitterProfile: socialController.getTwitterProfile,
     getCountryInfo: countryController.getCountryInfo,
-    createTodo: todoController.createTodo,
+    createTodo: (params) => {
+        // Ensure title is a string and has trim method
+        const title = String(params.title || '');
+        const priority = String(params.priority || 'medium');
+        const assignee = String(params.assignee || 'Unassigned');
+        return todoController.createTodo(title, priority, assignee);
+    },
     getAllTodos: (params) => {
         const { searchTerm = '', priority = '', dateFilter = '', assignee = '' } = params;
         return todoController.getAllTodos(searchTerm, priority, dateFilter, assignee);
     },
-    getTodoById: todoController.getTodoById,
-    updateTodo: todoController.updateTodo,
-    toggleComplete: todoController.toggleComplete,
-    deleteTodo: todoController.deleteTodo,
-    reassignTodo: todoController.reassignTodo
+    updateTodo: (params) => {
+        const { identifier, newTitle, priority, assignee } = params;
+        return todoController.updateTodo(identifier, newTitle, priority, assignee);
+    },
+    toggleComplete: (params) => {
+        const { identifier } = params;
+        return todoController.toggleComplete(identifier);
+    },
+    deleteTodo: (params) => {
+        const { identifier } = params;
+        return todoController.deleteTodo(identifier);
+    },
+    reassignTodo: (params) => {
+        const { identifier, newAssignee } = params;
+        return todoController.reassignTodo(identifier, newAssignee);
+    },
+    bulkUpdateAssignee: (params) => {
+        const { newAssignee, filter = {} } = params;
+        return todoController.bulkUpdateAssignee(newAssignee, filter);
+    }
 };
 
 // Format todo for display
@@ -269,43 +268,9 @@ async function aiAssistant(userQuery) {
             
             const action = JSON.parse(response);
             
-            // Handle conversation type responses
-            if (action.type === "conversation") {
-                return action.message || "I understand, but I'm not sure how to respond to that.";
-            }
-            
-            // Handle tool calling type responses
-            if (action.type === "tool_calling" && action.function && action.parameters) {
-                if (availableFunctions[action.function]) {
-                    // Sanitize parameters
-                    const sanitizedParams = Object.entries(action.parameters).reduce((acc, [key, value]) => {
-                        acc[key] = safeString(value);
-                        return acc;
-                    }, {});
-
-                    const result = await availableFunctions[action.function](...Object.values(sanitizedParams));
-                    
-                    // Special handling for getAllTodos and searchTodos
-                    if ((action.function === 'getAllTodos' || action.function === 'searchTodos') && result.success && result.data) {
-                        if (result.data.length === 0) {
-                            return result.message || "No todos found.";
-                        }
-                        const formattedTodos = result.data.map(formatTodo).join('\n');
-                        return `${result.message}\n${formattedTodos}`;
-                    }
-                    
-                    // Special handling for getTodoById
-                    if (action.function === 'getTodoById' && result.success && result.data) {
-                        return formatTodo(result.data);
-                    }
-                    
-                    return result.message || "Action completed successfully.";
-                } else {
-                    return "I understand what you want to do, but I don't have the right tool for that. Is there something else I can help with?";
-                }
-            }
-            
-            return "I'm not sure how to help with that. Could you rephrase your request?";
+            // Handle the AI response
+            const aiResponse = await handleAIResponse(action);
+            return aiResponse;
         } catch (parseError) {
             console.error('Error parsing AI response:', parseError);
             return "I'm having trouble understanding my own response. Please try again.";
@@ -318,6 +283,46 @@ async function aiAssistant(userQuery) {
         return handleError(error, 'AI processing');
     }
 }
+
+const system_internal_print_prefix = '--------'
+
+// Handle the AI response
+const handleAIResponse = async (action) => {
+    try {
+        // Handle conversation type responses
+        if (action.type === "conversation") {
+            console.log(system_internal_print_prefix , 'BOT: fullow up question')
+            return action.message + (action.followUp ? `\n\n${action.followUp}` : '');
+        }
+        
+        // Handle tool calling type responses
+        if (action.type === "tool_calling" && action.function && action.parameters) {
+            console.log(system_internal_print_prefix , 'BOT: tool calling:', action.function, 'params:', action.parameters)
+            if (availableFunctions[action.function]) {
+                const result = await availableFunctions[action.function](action.parameters);
+                
+                // Handle special cases for todos display
+                if (action.function === 'getAllTodos' && result.success && result.data) {
+                    if (result.data.length === 0) {
+                        return result.message + (action.followUp ? `\n\n${action.followUp}` : '');
+                    }
+                    const formattedTodos = result.data.map(formatTodo).join('\n');
+                    return `${result.message}\n${formattedTodos}${action.followUp ? `\n\n${action.followUp}` : ''}`;
+                }
+                
+                // Return regular response with follow-up
+                return result.message + (action.followUp ? `\n\n${action.followUp}` : '');
+            } else {
+                return "I understand what you want to do, but I don't have the right tool for that. Is there something else I can help with?";
+            }
+        }
+
+        return "I'm not sure how to help with that. Could you rephrase your request?";
+    } catch (error) {
+        console.error('Error handling AI response:', error);
+        return "Something went wrong. Please try again.";
+    }
+};
 
 // Main CLI loop
 async function main() {

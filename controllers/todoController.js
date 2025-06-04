@@ -323,6 +323,23 @@ const reassignTodo = async (id, newAssignee) => {
     }
 };
 
+// Bulk update assignee for all or filtered todos
+const bulkUpdateAssignee = async (newAssignee, filter = {}) => {
+    try {
+        const result = await Todo.updateMany(
+            filter,
+            { $set: { assignee: newAssignee.trim() } }
+        );
+
+        return {
+            success: true,
+            message: `Updated ${result.modifiedCount} todos to be assigned to ${newAssignee}`
+        };
+    } catch (error) {
+        return handleControllerError(error, 'bulkUpdate');
+    }
+};
+
 module.exports = {
     createTodo,
     getAllTodos,
@@ -330,5 +347,6 @@ module.exports = {
     updateTodo,
     toggleComplete,
     deleteTodo,
-    reassignTodo
+    reassignTodo,
+    bulkUpdateAssignee
 }; 
